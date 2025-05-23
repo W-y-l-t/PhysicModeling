@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Связанные маятники</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --primary: #4e54c8;
+      --secondary: #8f94fb;
+      --bg: #f5f7fa;
+      --card: #ffffff;
+      --text: #333333;
+      --accent: #ff6b6b;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; padding:0; font-family:'Roboto',sans-serif; background:var(--bg); color:var(--text); }
+    .container { width:100%; padding:20px 40px; }
+    h1 { text-align:center; margin-bottom:20px; color:var(--primary); font-weight:500; }
+    .card { background:var(--card); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.05); padding:20px; margin-bottom:30px; }
+    #controls { display:flex; flex-wrap:wrap; gap:15px; justify-content:space-between; }
+    #controls label { flex:1 1 140px; font-size:14px; display:flex; flex-direction:column; }
+    #controls input { margin-top:6px; padding:8px; border:1px solid #ccc; border-radius:4px; transition:border-color .2s; }
+    #controls input:focus { border-color:var(--primary); }
+    #controls button {
+      flex:1 1 100%; margin-top:10px; padding:14px; font-size:16px; font-weight:500;
+      color:#fff; background:linear-gradient(135deg,var(--primary),var(--secondary));
+      border:none; border-radius:6px; cursor:pointer; transition:background .3s,transform .1s;
+    }
+    #controls button:hover { background:linear-gradient(135deg,var(--secondary),var(--primary)); }
+    #controls button:active { transform:scale(0.98); }
+    #results { text-align:center; font-size:16px; }
+    #charts { display:flex; flex-direction:column; gap:10px; align-items:center; }
+    #charts canvas {
+      background:var(--card); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.05);
+      width:100%; max-width:1100px; height:700px !important; padding:10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Связанные маятники</h1>
+
+    <div id="controls" class="card">
+      <label>m (кг):       <input id="m"       type="number" step="0.1" value="1"></label>
+      <label>L (м):       <input id="L"       type="number" step="0.1" value="1"></label>
+      <label>D (м):       <input id="D"       type="number" step="0.1" value="0.5"></label>
+      <label>L₁ (м):      <input id="L1"      type="number" step="0.1" value="0.5"></label>
+      <label>k (Н/м):     <input id="k"       type="number" step="1"   value="20"></label>
+      <label>β (Н·м·с):    <input id="beta"    type="number" step="0.1" value="0.1"></label>
+      <label>g (м/с²):     <input id="g"       type="number" step="0.1" value="9.81"></label>
+      <label>φ₁₀ (рад):   <input id="phi10"   type="number" step="0.1" value="0.5"></label>
+      <label>φ₂₀ (рад):   <input id="phi20"   type="number" step="0.1" value="0.2"></label>
+      <label>ω₁₀ (рад/с): <input id="omega10" type="number" step="0.1" value="0"></label>
+      <label>ω₂₀ (рад/с): <input id="omega20" type="number" step="0.1" value="0"></label>
+      <label>Δt (с):      <input id="dt"      type="number" step="0.001" value="0.01"></label>
+      <label>T (с):       <input id="T"       type="number" step="1"     value="20"></label>
+      <button id="start">Запустить моделирование</button>
+    </div>
+
+    <div id="results" class="card">
+      <p>Нормальные частоты (линейное приближение):<br>
+         ω<sub>1</sub> = <span id="nf1">–</span> рад/с;&nbsp;
+         ω<sub>2</sub> = <span id="nf2">–</span> рад/с
+      </p>
+    </div>
+
+    <div id="charts" class="card">
+      <canvas id="angleChart"></canvas>
+      <canvas id="velocityChart"></canvas>
+    </div>
+  </div>
+
+  <script>
+    const css = getComputedStyle(document.documentElement);
+    const accentColor  = css.getPropertyValue('--accent').trim();
+    const primaryColor = css.getPropertyValue('--primary').trim();
+
+    function rk4(state, h, deriv) {
+      const k1 = deriv(state);
+      const k2 = deriv(state.map((v,i) => v + k1[i]*h/2));
+      const k3 = deriv(state.map((v,i) => v + k2[i]*h/2));
+      const k4 = deriv(state.map((v,i) => v + k3[i]*h));
+      return state.map((v,i) => v + (h/6)*(k1[i] + 2*k2[i] + 2*k3[i] + k4[i]));
+    }
+
+    function simulate(p) {
+      const N = Math.floor(p.T / p.dt);
+      const t  = [], Φ1 = [], Φ2 = [], Ω1 = [], Ω2 = [];
+      let state = [p.phi10, p.omega10, p.phi20, p.omega20];
+
+      function deriv([φ1, ω1, φ2, ω2]) {
+        const x1 = -p.D/2 + p.L1 * Math.sin(φ1);
+        const y1 = -p.L1 * Math.cos(φ1);
+        const x2 =  p.D/2 + p.L1 * Math.sin(φ2);
+        const y2 = -p.L1 * Math.cos(φ2);
+
+        const dx = x2 - x1, dy = y2 - y1;
+        const Ls = Math.hypot(dx, dy) || 1e-9;
+        const dL = Ls - p.D;
+        const Fs = p.k * dL;
+
+        const Fx1 = Fs * (dx / Ls);
+        const Fy1 = Fs * (dy / Ls);
+
+        const τ1 = x1 * Fy1 - y1 * Fx1;
+        const τ2 = -τ1;
+
+        const α1 = τ1/(p.m*p.L*p.L)
+                 - (p.beta/(p.m*p.L*p.L))*ω1
+                 - (p.g/p.L)*Math.sin(φ1);
+        const α2 = τ2/(p.m*p.L*p.L)
+                 - (p.beta/(p.m*p.L*p.L))*ω2
+                 - (p.g/p.L)*Math.sin(φ2);
+
+        return [ω1, α1, ω2, α2];
+      }
+
+      for (let i = 0; i <= N; i++) {
+        t.push(i * p.dt);
+        Φ1.push(state[0]); Ω1.push(state[1]);
+        Φ2.push(state[2]); Ω2.push(state[3]);
+        state = rk4(state, p.dt, deriv);
+      }
+      return { t, Φ1, Φ2, Ω1, Ω2 };
+    }
+
+    function makeChart(ctx, xLabel, yLabel, colors) {
+      return new Chart(ctx, {
+        type: 'line',
+        data: { datasets: [
+          { label: colors[0].label, data: [], borderColor: colors[0].col, fill: false, tension: 0.2 },
+          { label: colors[1].label, data: [], borderColor: colors[1].col, fill: false, tension: 0.2 }
+        ]},
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          layout: { padding: 12 },
+          scales: {
+            x: {
+              type: 'linear', position: 'bottom',
+              title: { display: true, text: xLabel },
+              suggestedMin: 0,
+              ticks: { maxTicksLimit: 10, callback: v => v.toFixed(2) },
+              grid: { color: 'rgba(0,0,0,0.05)' }
+            },
+            y: {
+              title: { display: true, text: yLabel },
+              ticks: { callback: v => v.toFixed(2) },
+              grid: { color: 'rgba(0,0,0,0.05)' }
+            }
+          },
+          plugins: { legend: { labels: { padding: 12, boxWidth: 10 } } }
+        }
+      });
+    }
+
+    const angleChart = makeChart(
+      document.getElementById('angleChart').getContext('2d'),
+      't (с)', 'φ (рад)',
+      [{ label: 'φ₁', col: accentColor }, { label: 'φ₂', col: primaryColor }]
+    );
+    const velocityChart = makeChart(
+      document.getElementById('velocityChart').getContext('2d'),
+      't (с)', 'ω (рад/с)',
+      [{ label: 'ω₁', col: '#2ecc71' }, { label: 'ω₂', col: '#f1c40f' }]
+    );
+
+    document.getElementById('start').addEventListener('click', () => {
+      const ids = ['m','L','D','L1','k','beta','g','phi10','phi20','omega10','omega20','dt','T'];
+      const p = {}; ids.forEach(id => p[id] = parseFloat(document.getElementById(id).value));
+
+      const ω1 = Math.sqrt(p.g / p.L);
+      const ω2 = Math.sqrt(p.g / p.L + 2 * p.k * p.L1 * p.L1 / (p.m * p.L * p.L));
+      document.getElementById('nf1').textContent = ω1.toFixed(3);
+      document.getElementById('nf2').textContent = ω2.toFixed(3);
+
+      const { t, Φ1, Φ2, Ω1, Ω2 } = simulate(p);
+
+      angleChart.data.datasets[0].data = t.map((x,i) => ({ x, y: Φ1[i] }));
+      angleChart.data.datasets[1].data = t.map((x,i) => ({ x, y: Φ2[i] }));
+      velocityChart.data.datasets[0].data = t.map((x,i) => ({ x, y: Ω1[i] }));
+      velocityChart.data.datasets[1].data = t.map((x,i) => ({ x, y: Ω2[i] }));
+
+      const maxΦ = Math.max(...Φ1.map(Math.abs), ...Φ2.map(Math.abs));
+      angleChart.options.scales.y.suggestedMin = -maxΦ * 1.1;
+      angleChart.options.scales.y.suggestedMax =  maxΦ * 1.1;
+      const maxΩ = Math.max(...Ω1.map(Math.abs), ...Ω2.map(Math.abs));
+      velocityChart.options.scales.y.suggestedMin = -maxΩ * 1.1;
+      velocityChart.options.scales.y.suggestedMax =  maxΩ * 1.1;
+
+      angleChart.options.scales.x.suggestedMax = p.T;
+      velocityChart.options.scales.x.suggestedMax = p.T;
+
+      angleChart.update();
+      velocityChart.update();
+    });
+  </script>
+</body>
+</html>
