@@ -1,46 +1,238 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Моделирование дифракционной решетки</title>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./style.css">
-  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/numeric/1.2.6/numeric.min.js"></script>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Кольца Ньютона — симуляция</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --card: #fff;
+      --text: #333;
+      --primary: #4e54c8;
+      --accent: #ff6b6b;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:'Roboto',sans-serif; background:var(--bg); color:var(--text); }
+    .container { max-width:1000px; margin:0 auto; padding:20px; }
+    h1 { text-align:center; color:var(--primary); margin-bottom:20px; }
+    .card { background:var(--card); border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.05); padding:20px; margin-bottom:24px; }
+    .controls { display:flex; flex-wrap:wrap; gap:16px; }
+    .controls label { flex:1 1 180px; display:flex; flex-direction:column; font-size:14px; }
+    .controls input, .controls select { margin-top:6px; padding:8px; border:1px solid #ccc; border-radius:4px; }
+    .controls button {
+      padding:12px 20px; font-size:16px; color:#fff;
+      background:linear-gradient(135deg,var(--primary),var(--accent));
+      border:none; border-radius:6px; cursor:pointer; flex:1 1 100%; transition:background .3s;
+    }
+    .controls button:hover { background:linear-gradient(135deg,var(--accent),var(--primary)); }
+    #plots { display:flex; flex-wrap:wrap; gap:20px; justify-content:space-around; }
+    canvas { border-radius:8px; background:#000; }
+    #monoCanvas, #quasiCanvas { flex:1 1 45%; }
+    #radialChart { width:100%; height:300px; }
+    #radii { text-align:center; font-size:16px; }
+  </style>
 </head>
 <body>
-  <div class="site-container">
-    <header class="site-header">
-      <h1>Моделирование разрешающей способности дифракционной решетки</h1>
-    </header>
+  <div class="container">
+    <h1>Кольца Ньютона</h1>
 
-    <section class="controls">
-      <h2>Параметры модели</h2>
-      <form id="paramsForm" class="form-grid">
-        <div class="form-group">
-          <label for="period">Период решётки</label>
-          <input type="number" id="period" name="period" value="1.0" step="0.1">
-        </div>
-        <div class="form-group">
-          <label for="total_strokes">Общее число штрихов</label>
-          <input type="number" id="total_strokes" name="total_strokes" value="1000" step="1">
-        </div>
-        <button type="button" onclick="plotGraphs()" class="btn-primary">Построить графики</button>
-      </form>
-    </section>
+    <div class="card controls">
+      <label>Режим
+        <select id="mode">
+          <option value="mono">Монохроматический</option>
+          <option value="quasi">Квазимонохроматический</option>
+        </select>
+      </label>
 
-    <main class="plots">
-      <div class="plot-card" id="plot1"></div>
-      <div class="plot-card" id="plot2"></div>
-      <div class="plot-card" id="plot3"></div>
-    </main>
+      <label>R (м):
+        <input id="R" value="0,5">
+      </label>
+      <label>λ₀ (нм):
+        <input id="lam0" value="550">
+      </label>
 
-    <footer class="site-footer">
-      <p>Выполнили Семёнов Д.В. и Варакин Г.В. M3200 © 2025</p>
-    </footer>
+      <label id="bwLabel" style="display:none">Ширина Δλ (нм):
+        <input id="bw" value="50">
+      </label>
+
+      <label>Grid (мм):
+        <input id="grid" value="5">
+      </label>
+      <label>Разрешение N:
+        <input id="N" value="400">
+      </label>
+
+      <button id="renderBtn">Построить</button>
+    </div>
+
+    <div id="plots" class="card">
+      <canvas id="monoCanvas"></canvas>
+      <canvas id="quasiCanvas"></canvas>
+    </div>
+
+    <div class="card">
+      <canvas id="radialChart"></canvas>
+    </div>
+
+    <div id="radii" class="card">
+      Радиусы тёмных колец (первые 5): <span id="radiiList">–</span>
+    </div>
   </div>
 
-  <script src="./script.js"></script>
+  <script>
+    function parseNum(s){ return parseFloat(String(s).replace(',','.')); }
+
+    function wedge(r,R){ return r*r/(2*R); }
+    function intensity(r,lam,R){
+      const δ = 4*Math.PI*wedge(r,R)/lam + Math.PI;
+      return 0.5*(1 + Math.cos(δ));
+    }
+    function wlToRgb(wl){
+      let R=0,G=0,B=0;
+      if(wl>=380&&wl<440){ R=-(wl-440)/60; B=1; }
+      else if(wl<490){ G=(wl-440)/50; B=1; }
+      else if(wl<510){ G=1; B=-(wl-510)/20; }
+      else if(wl<580){ R=(wl-510)/70; G=1; }
+      else if(wl<645){ R=1; G=-(wl-645)/65; }
+      else if(wl<=780){ R=1; }
+      let f=1;
+      if(wl<420) f=0.3+0.7*(wl-380)/40;
+      else if(wl>700) f=0.3+0.7*(780-wl)/80;
+      return [R*f, G*f, B*f];
+    }
+
+    const modeEl   = document.getElementById('mode'),
+          Rinp     = document.getElementById('R'),
+          lam0inp  = document.getElementById('lam0'),
+          bwinp    = document.getElementById('bw'),
+          bwLabel  = document.getElementById('bwLabel'),
+          gridinp  = document.getElementById('grid'),
+          Nin      = document.getElementById('N'),
+          monoCan  = document.getElementById('monoCanvas'),
+          quaCan   = document.getElementById('quasiCanvas'),
+          radiiOut = document.getElementById('radiiList'),
+          radCtx   = document.getElementById('radialChart').getContext('2d');
+
+    let radChart = null;
+    const SPECTRAL_SAMPLES = 27;
+
+    modeEl.addEventListener('change', ()=>{
+      if(modeEl.value==='quasi'){
+        bwLabel.style.display = 'block';
+      } else {
+        bwLabel.style.display = 'none';
+      }
+    });
+
+    document.getElementById('renderBtn').addEventListener('click', build);
+    window.addEventListener('load', build);
+
+    function build(){
+      const mode   = modeEl.value;
+      const R      = parseNum(Rinp.value);
+      const lam0   = parseNum(lam0inp.value)*1e-9;
+      const dLam   = mode==='quasi'
+                     ? parseNum(bwinp.value)*1e-9
+                     : 0;
+      const grid   = parseNum(gridinp.value)*1e-3;
+      const N      = parseInt(Nin.value,10);
+
+      if(!R||!grid||!N||!lam0||(mode==='quasi'&&!dLam)){
+        alert('Проверьте параметры'); return;
+      }
+
+      const x = Array.from({length:N},(_,i)=> -grid + 2*grid*i/(N-1));
+
+      const lambdas = mode==='quasi'
+        ? Array.from({length:SPECTRAL_SAMPLES},
+            (_,i)=> lam0 - dLam/2 + dLam*i/(SPECTRAL_SAMPLES-1))
+        : [lam0];
+
+      [monoCan, quaCan].forEach(c=>{ c.width=N; c.height=N; });
+      const ctxM = monoCan.getContext('2d'),
+            ctxQ = quaCan .getContext('2d'),
+            imgM = ctxM.createImageData(N,N),
+            imgQ = ctxQ.createImageData(N,N);
+
+      const Imo = new Float32Array(N*N),
+            Iqu = new Float32Array(N*N),
+            accR= new Float32Array(N*N),
+            accG= new Float32Array(N*N),
+            accB= new Float32Array(N*N);
+      let maxCol=0;
+
+      for(let yi=0; yi<N; yi++){
+        for(let xi=0; xi<N; xi++){
+          const r = Math.hypot(x[xi], x[yi]);
+
+          const i0 = intensity(r, lam0, R);
+          Imo[yi*N+xi] = i0;
+
+          let sum = 0, cr=0, cg=0, cb=0;
+          for(const lam of lambdas){
+            const ii = intensity(r, lam, R);
+            sum += ii;
+            const [rr,gg,bb] = wlToRgb(lam*1e9);
+            cr += rr*ii; cg += gg*ii; cb += bb*ii;
+          }
+          const iq = sum / lambdas.length;
+          Iqu[yi*N+xi] = iq;
+          accR[yi*N+xi] = cr;
+          accG[yi*N+xi] = cg;
+          accB[yi*N+xi] = cb;
+          maxCol = Math.max(maxCol, cr, cg, cb);
+        }
+      }
+
+      for(let i=0;i<N*N;i++){
+        const vm = Math.round(255 * Imo[i]);
+        imgM.data[4*i]=imgM.data[4*i+1]=imgM.data[4*i+2]=vm;
+        imgM.data[4*i+3]=255;
+
+        const scale = maxCol ? 255/maxCol : 0;
+        imgQ.data[4*i  ] = Math.round(accR[i]*scale);
+        imgQ.data[4*i+1] = Math.round(accG[i]*scale);
+        imgQ.data[4*i+2] = Math.round(accB[i]*scale);
+        imgQ.data[4*i+3] = 255;
+      }
+      ctxM.putImageData(imgM,0,0);
+      ctxQ.putImageData(imgQ,0,0);
+
+      monoCan.style.display = mode==='mono'  ? 'block' : 'none';
+      quaCan .style.display = mode==='quasi' ? 'block' : 'none';
+
+      const mid = Math.floor(N/2);
+      const dataMono = x.map((xx,i)=>({x:xx*1e3, y:Imo[mid*N+i]}));
+      const dataQua  = x.map((xx,i)=>({x:xx*1e3, y:Iqu[mid*N+i]}));
+
+      if(radChart) radChart.destroy();
+      const ds = (mode==='mono'
+        ? [{label:'Моно', data:dataMono, borderColor:'#f90', fill:false, tension:.15}]
+        : [{label:'Квази', data:dataQua,  borderColor:'#c33', fill:false, tension:.15}]
+      );
+
+      radChart = new Chart(radCtx,{
+        type:'line',
+        data:{datasets:ds},
+        options:{
+          maintainAspectRatio:false,
+          scales:{
+            x:{type:'linear', title:{display:true,text:'r (мм)'}},
+            y:{min:0,max:1, title:{display:true,text:'I / Iₘₐₓ'}}
+          },
+          plugins:{legend:{position:'top'}}
+        }
+      });
+
+      const radii = [];
+      for(let m=1; m<=5; m++){
+        radii.push((Math.sqrt(m*lam0*R)*1e3).toFixed(2)+' мм');
+      }
+      radiiOut.textContent = radii.join(', ');
+    }
+  </script>
 </body>
 </html>
