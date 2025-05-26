@@ -195,8 +195,18 @@
 
       for(let i=0;i<N*N;i++){
         const vm = Math.round(255 * Imo[i]);
-        imgM.data[4*i]=imgM.data[4*i+1]=imgM.data[4*i+2]=vm;
-        imgM.data[4*i+3]=255;
+        const lam0_nm = parseNum(lam0inp.value);
+        const [r, g, b] = wlToRgb(lam0_nm);
+
+        if (lam0_nm >= 380 && lam0_nm <= 780) {
+          const [r, g, b] = wlToRgb(lam0_nm);
+          imgM.data[4*i]   = Math.round(r * vm);
+          imgM.data[4*i+1] = Math.round(g * vm);
+          imgM.data[4*i+2] = Math.round(b * vm);
+        } else {
+          imgM.data[4*i] = imgM.data[4*i+1] = imgM.data[4*i+2] = vm;
+        }
+        imgM.data[4*i+3] = 255;
 
         const scale = maxCol ? 255/maxCol : 0;
         imgQ.data[4*i  ] = Math.round(accR[i]*scale);
